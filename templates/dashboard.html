@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Analytics Dashboard</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<style>
+    body { 
+        font-family: sans-serif; 
+        padding: 20px; 
+    }
+    h1 { 
+        text-align: center; 
+    }
+    .controls { 
+        display: flex; 
+        justify-content: center; 
+        gap: 20px; 
+        margin-bottom: 40px; 
+    }
+    select { 
+        padding: 8px; 
+        font-size: 16px; 
+    }
+    .charts-grid { 
+        display: grid;
+        grid-template-columns: 0.5fr 1fr;
+        gap: 20px;
+        max-width: 1200px;
+        margin: auto;
+        align-items: start;
+    }
+    .chart-container {
+        border: 1px solid #ddd;
+        padding: 20px;
+    } 
+    
+    .stat-cards-container {
+        display: flex;
+        gap: 15px;
+        justify-content: space-around;
+        align-items: center;
+        height: 100%;
+    }
+    .stat-card {
+        text-align: center;
+    }
+    .stat-card .label {
+        font-size: 18px;
+        color: #333;
+        
+    }
+    .stat-card .value {
+        font-size: 32px;
+        font-weight: bold;
+        margin-top: 5px;
+    }
+    
+    @media (max-width: 800px) { 
+        .charts-grid { grid-template-columns: 1fr; } 
+    }
+</style>
+
+
+</head>
+<body>
+    <h1>Voter Analytics</h1>
+
+    <div class="controls">
+        <select id="pdf-selector">
+            <option value="">-- Select a PDF --</option>
+        </select>
+        <select id="section-selector" disabled>
+            <option value="">-- Select a Section --</option>
+        </select>
+    </div>
+
+    <div id="charts-grid" class="charts-grid"></div>
+
+    <script>
+        const pdfSelector = document.getElementById('pdf-selector');
+        const sectionSelector = document.getElementById('section-selector');
+        const chartsGrid = document.getElementById('charts-grid');
+        // We only need to keep track of the age chart instance now
+        let ageChartInstance = null;
+
+        async function populatePdfs() {
+            const response = await fetch('/api/pdfs');
+            const pdfs = await response.json();
+            pdfs.forEach(pdf => {
+                const option = new Option(pdf.file_name, pdf.id);
+                pdfSelector.add(option);
+            });
+        }
+
+        pdfSelector.addEventListener('change', async () => {
+            const pdfId = pdfSelector.value;
+            sectionSelector.innerHTML = '<option value="">-- Select a Section --</option>';
+            chartsGrid.innerHTML = '';
+            sectionSelector.disabled = true;
+
+            if (!pdfId) return;
+
+            sectionSelector.add(new Option("-- All Sections --", "all"));
+            const response = await fetch(`/api/sections/${pdfId}`);
+            const sections = await response.json();
+            sections.forEach(section => {
+                const option = new Option(section.section_name, section.id);
+                sectionSelector.add(option);
+            });
+            sectionSelector.disabled = false;
+        });
+
+        sectionSelector.addEventListener('change', async () => {
+            const sectionId = sectionSelector.value;
+            const pdfId = pdfSelector.value;
+            chartsGrid.innerHTML = '';
+            if (ageChartInstance) ageChartInstance.destroy();
+
+            if (!sectionId) return;
+
+            let apiUrl = (sectionId === "all") ? `/api/analytics/pdf/${pdfId}` : `/api/analytics/section/${sectionId}`;
+            const response = await fetch(apiUrl);
+            const analytics = await response.json();
+
+            // --- CHANGE: Create placeholders for the new cards and the age chart ---
+            chartsGrid.innerHTML = `
+                
+                <div class="chart-container"><h3>Gender Totals</h3><div id="gender-cards" class="stat-cards-container"></div></div>
+                <div class="chart-container"><h3>Age Distribution</h3><canvas id="ageChart"></canvas></div>
+                
+            `;
+
+            // --- CHANGE: Loop through gender data to create cards instead of a pie chart ---
+            const genderCardsContainer = document.getElementById('gender-cards');
+            analytics.gender_data.labels.forEach((label, index) => {
+                const count = analytics.gender_data.data[index];
+                const card = document.createElement('div');
+                card.className = 'stat-card';
+                card.innerHTML = `<div class="label">${label}</div><div class="value">${count}</div>`;
+                genderCardsContainer.appendChild(card);
+            });
+
+            // Draw Age Bar Chart (this part is unchanged)
+            const ageCtx = document.getElementById('ageChart').getContext('2d');
+            ageChartInstance = new Chart(ageCtx, {
+                type: 'bar',
+                data: {
+                    labels: analytics.age_data.labels,
+                    datasets: [{ label: 'Voter Count', data: analytics.age_data.data, backgroundColor: '#4BC0C0' }]
+                },
+                options: { scales: { y: { beginAtZero: true } } }
+            });
+        });
+
+        populatePdfs();
+    </script>
+</body>
+</html>

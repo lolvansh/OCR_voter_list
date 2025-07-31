@@ -131,6 +131,12 @@ If either is not present, consider it to be an empty string.
 For each 'voter' object (one per line):
 - 'type': "voter"
 - 'json_schema_version': "2025-07-19_V3_JSONL"
+
+- 'STATUSTYPE': "**CRITICAL STATUS FIELD:** Based on your Priority 1 Status Check, set this value.
+    - If the 'DELETED' watermark is present, you MUST set this to 'D'.
+    - If a '#' symbol appears before the voter's serial number (SL_NO), you MUST set this to 'M'.
+    - If neither of the above conditions is met, you MUST set this to 'N'.
+    This field cannot be left empty."
 - 'SL_NO': Extract the serial number shown next to the voter's details box (e.g., "1").
 - 'VOTER_NAME': Locate the 'મતદાનું નામ:' field. Extract **ALL text** that follows 'મતદાનું નામ:' up until the next distinct field label (e.g., 'પિતાનું નામ:', 'પતિનું નામ:', or 'ઘર નંબર:'). **Combine all words and parts, including any surnames appearing on the same or subsequent lines, into a single, complete full name for the voter.** (e.g., "અવધકુમાર શેરવાળી", "મોહમદમુસા હલદર", "મોહમદ શભર હલદર").
 - 'RELATIVE_NAME': Locate the 'પિતાનું નામ:' or 'પતિનું નામ:' field. Extract **ALL text** that follows this relation label up until the next distinct field label (e.g., 'ઘર નંબર:', 'ઉમર :'). **Combine all words and parts, including any surnames appearing on the same or subsequent lines, into a single, complete full name for the father/husband/mother.** (e.g., "હિરાલાલ શેરવાળી", "મોહમદઅલીમ હલદર"). If no relation name is found, use an empty string.
@@ -141,7 +147,7 @@ For each 'voter' object (one per line):
 - 'RLN_TYPE': "Identify if RELATIVE_NAME field is 'પતિનું નામ:'= H, 'પિતાનું નામ:'= F, 'માતાનું નામ'= M, 'અન્ય'= O"
 - 'ALL_TXT': Extract all raw text content within this specific voter's detail box.
 - 'BOX_NO_ON_PAGE': The sequential number of the voter on this specific page (1-30).
-- 'STATUSTYPE': **Analyze the voter's box. If a semi-transparent "DELETED" stamp is visible over the text, set this to "D".** If a "#" symbol appears before the SL_NO, set this to "M". Otherwise, set this to "N".
+
 - 'PAGE_SECTION_NAME': "Use the section name you identified at the start of the process as the value for this field. Use the exact same value for every voter object on this page."
 - 'PAGE_NO': "Use the page number you identified at the start of the process as the value for this field. Use the exact same value for every voter object on this page."
 

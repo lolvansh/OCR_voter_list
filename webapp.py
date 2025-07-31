@@ -147,13 +147,55 @@ def download_csv():
 
 # --- ADD THIS NEW ROUTE FOR ANALYTICS ---
 
-# In webapp.py
+@app.route('/dashboard')
+def dashboard():
+    return render_template('dashboard.html')
 
-@app.route('/api/analytics/gender/<int:pdf_id>')
-def get_gender_distribution(pdf_id):
-    """
-    Calculates the gender distribution for a given PDF ID.
-    """
+# In webapp.py, add these two new routes
+
+
+@app.route('/api/pdfs')
+def get_all_pdfs():
+    """Returns a list of all processed PDFs with their IDs and names."""
+    db_path = "voter_data.db"
+    if not os.path.exists(db_path):
+        return jsonify({"error": "Database not found."}), 404
+        
+    try:
+        conn = sqlite3.connect(db_path)
+        df = pd.read_sql_query("SELECT id, file_name FROM pdfs ORDER BY id", conn)
+        conn.close()
+        
+        # Convert the DataFrame to a list of dictionaries (which becomes JSON)
+        return jsonify(df.to_dict(orient='records'))
+
+    except Exception as e:
+        logging.error(f"Error fetching PDF list: {e}", exc_info=True)
+        return jsonify({"error": str(e)}), 500
+    
+    
+
+@app.route('/api/sections/<int:pdf_id>')
+def get_sections_for_pdf(pdf_id):
+    """Returns a list of sections for a given PDF ID."""
+    db_path = "voter_data.db"
+    if not os.path.exists(db_path):
+        return jsonify({"error": "Database not found."}), 404
+        
+    try:
+        conn = sqlite3.connect(db_path)
+        query = "SELECT id, section_name FROM sections WHERE pdf_id = ? ORDER BY section_name"
+        df = pd.read_sql_query(query, conn, params=(pdf_id,))
+        conn.close()
+        return jsonify(df.to_dict(orient='records'))
+    except Exception as e:
+        logging.error(f"Error fetching sections for pdf_id {pdf_id}: {e}", exc_info=True)
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/analytics/section/<int:section_id>')
+def get_analytics_for_section(section_id):
+    """Returns analytics data (gender, age) for a specific section ID."""
     db_path = "voter_data.db"
     if not os.path.exists(db_path):
         return jsonify({"error": "Database not found."}), 404
@@ -161,34 +203,110 @@ def get_gender_distribution(pdf_id):
     try:
         conn = sqlite3.connect(db_path)
         
-        query = """
-        SELECT
-            v.gender,
-            COUNT(*) as count
-        FROM voters v
-        JOIN sections s ON v.section_id = s.id
-        WHERE s.pdf_id = ?
-        GROUP BY v.gender;
-        """
+        # Gender data query
+        gender_query = "SELECT gender, COUNT(*) as count FROM voters WHERE section_id = ? GROUP BY gender"
+        gender_df = pd.read_sql_query(gender_query, conn, params=(section_id,))
         
-        # --- FIX: Pass the connection object 'conn' and use the 'params' argument ---
-        df = pd.read_sql_query(query, conn, params=(pdf_id,))
+        # Age distribution query
+        age_query = """
+        SELECT
+            CASE
+                WHEN age BETWEEN 18 AND 29 THEN '18-29'
+                WHEN age BETWEEN 30 AND 39 THEN '30-39'
+                WHEN age BETWEEN 40 AND 49 THEN '40-49'
+                WHEN age BETWEEN 50 AND 59 THEN '50-59'
+                ELSE '60+'
+            END as age_group,
+            COUNT(*) as count
+        FROM voters
+        WHERE section_id = ? AND age IS NOT NULL
+        GROUP BY age_group
+        ORDER BY age_group
+        """
+        age_df = pd.read_sql_query(age_query, conn, params=(section_id,))
         
         conn.close()
-        
-        # Format the data perfectly for a chart library like Chart.js
-        chart_data = {
-            "labels": df['gender'].tolist(),
-            "data": df['count'].tolist()
-        }
-        
-        return jsonify(chart_data)
 
+        # Combine all analytics into one JSON response
+        response_data = {
+            "gender_data": {
+                "labels": gender_df['gender'].tolist(),
+                "data": gender_df['count'].tolist()
+            },
+            "age_data": {
+                "labels": age_df['age_group'].tolist(),
+                "data": age_df['count'].tolist()
+            }
+        }
+        return jsonify(response_data)
+        
     except Exception as e:
-        logging.error(f"Database query error for pdf_id {pdf_id}: {e}", exc_info=True)
+        logging.error(f"Error fetching analytics for section_id {section_id}: {e}", exc_info=True)
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/analytics/pdf/<int:pdf_id>')
+def get_analytics_for_pdf(pdf_id):
+    """Returns analytics data (gender, age) for an entire PDF ID."""
+    db_path = "voter_data.db"
+    if not os.path.exists(db_path):
+        return jsonify({"error": "Database not found."}), 404
+        
+    try:
+        conn = sqlite3.connect(db_path)
+        
+        # Gender data query for the whole PDF
+        gender_query = """
+        SELECT v.gender, COUNT(*) as count
+        FROM voters v JOIN sections s ON v.section_id = s.id
+        WHERE s.pdf_id = ?
+        GROUP BY v.gender
+        """
+        gender_df = pd.read_sql_query(gender_query, conn, params=(pdf_id,))
+        
+        # Age distribution query for the whole PDF
+        age_query = """
+        SELECT
+            CASE
+                WHEN age BETWEEN 18 AND 29 THEN '18-29'
+                WHEN age BETWEEN 30 AND 39 THEN '30-39'
+                WHEN age BETWEEN 40 AND 49 THEN '40-49'
+                WHEN age BETWEEN 50 AND 59 THEN '50-59'
+                ELSE '60+'
+            END as age_group,
+            COUNT(*) as count
+        FROM voters v JOIN sections s ON v.section_id = s.id
+        WHERE s.pdf_id = ? AND age IS NOT NULL
+        GROUP BY age_group ORDER BY age_group
+        """
+        age_df = pd.read_sql_query(age_query, conn, params=(pdf_id,))
+        
+        conn.close()
+
+        response_data = {
+            "gender_data": { "labels": gender_df['gender'].tolist(), "data": gender_df['count'].tolist() },
+            "age_data": { "labels": age_df['age_group'].tolist(), "data": age_df['count'].tolist() }
+        }
+        return jsonify(response_data)
+        
+    except Exception as e:
+        logging.error(f"Error fetching analytics for pdf_id {pdf_id}: {e}", exc_info=True)
         return jsonify({"error": str(e)}), 500
 
 # --- Main Entry Point ---
 if __name__ == '__main__':
+        # --- ADD THIS INITIALIZATION BLOCK ---
+    # This will run once when the server starts.
+    db_path = "voter_data.db"
+    logging.info("Initializing database...")
+    conn = pipeline_processor.create_connection(db_path)
+    if conn is not None:
+        pipeline_processor.create_tables(conn)
+        conn.close()
+        logging.info("Database is ready.")
+    else:
+        logging.error("FATAL: Could not connect to or create the database. Exiting.")
+        # We should exit if the database can't be set up.
+        exit()
     webbrowser.open_new("http://127.0.0.1:8080")
     serve(app, host="127.0.0.1", port=8080)
