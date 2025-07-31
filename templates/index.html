@@ -1,0 +1,303 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>PDF Data Processor</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --primary-color: #4a90e2;
+            --primary-hover: #357ABD;
+            --background-color: #f8f9fa;
+            --container-bg: #ffffff;
+            --text-color: #333;
+            --border-color: #dee2e6;
+            --success-color: #28a745;
+            --error-color: #dc3545;
+        }
+
+        body {
+            font-family: 'Poppins', sans-serif;
+            text-align: center;
+            margin: 0;
+            background-color: var(--background-color);
+            color: var(--text-color);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+        }
+
+        .container {
+            background-color: var(--container-bg);
+            border-radius: 12px;
+            box-shadow: 0 8px 25px rgba(0,0,0,0.1);
+            padding: 40px;
+            width: 90%;
+            max-width: 600px;
+            transition: all 0.3s ease;
+        }
+
+        h1 {
+            color: #1a1a1a;
+            margin-top: 0;
+        }
+
+        .upload-area {
+            border: 2px dashed var(--border-color);
+            border-radius: 8px;
+            padding: 28px 20px;
+            cursor: pointer;
+            transition: background-color 0.3s, border-color 0.3s;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+        .upload-area:hover {
+            background-color: #f1f8ff;
+            border-color: var(--primary-color);
+        }
+        .upload-area svg {
+            width: 50px;
+            height: 50px;
+            margin-bottom: 15px;
+            color: var(--primary-color);
+        }
+        #file-input {
+            display: none;
+        }
+        #file-name {
+            margin-top: 15px;
+            font-style: italic;
+            color: #666;
+        }
+
+        input[type="submit"] {
+            background-color: var(--primary-color);
+            color: white;
+            padding: 12px 25px;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 16px;
+            font-weight: 500;
+            transition: background-color 0.3s;
+            margin-top: 20px;
+        }
+        input[type="submit"]:hover:not(:disabled) {
+            background-color: var(--primary-hover);
+        }
+        input[type="submit"]:disabled {
+            background-color: #a0a0a0;
+            cursor: not-allowed;
+        }
+
+        #progress-container {
+            margin-top: 25px;
+            display: none;
+        }
+        progress {
+            width: 100%;
+            height: 12px;
+            -webkit-appearance: none;
+            appearance: none;
+            border: none;
+            border-radius: 10px;
+            overflow: hidden;
+        }
+        progress::-webkit-progress-bar {
+            background-color: #e9ecef;
+        }
+        progress::-webkit-progress-value {
+            background-color: var(--primary-color);
+            transition: width 0.4s ease;
+        }
+        #status-text {
+            margin-top: 10px;
+            font-size: 1em;
+            font-weight: 500;
+            color: #555;
+            min-height: 24px; /* Reserve space */
+        }
+        #status-header.success { color: var(--success-color); }
+        #status-header.error { color: var(--error-color); }
+        
+        #download-csv-btn {
+            background-color: var(--success-color);
+            color: white;
+            padding: 10px 20px;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 15px;
+            font-weight: 500;
+            transition: background-color 0.3s;
+            margin-top: 15px;
+        }
+        #download-csv-btn:hover {
+            background-color: #218838; /* Darker green */
+        }
+
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Voter List Processor</h1>
+        <p>Select one or more PDF files to begin extraction.</p>
+        <form id="upload-form">
+            <label for="file-input" class="upload-area">
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M12 16.5V9.75m0 0l-3.75 3.75M12 9.75l3.75 3.75M3 17.25V6.75a2.25 2.25 0 012.25-2.25h13.5A2.25 2.25 0 0121 6.75v10.5a2.25 2.25 0 01-2.25 2.25H5.25A2.25 2.25 0 013 17.25z" />
+                </svg>
+                <div>Click to select files or drag and drop</div>
+                <div id="file-name">No files selected</div>
+            </label>
+            <input type="file" name="file" id="file-input" required multiple accept=".pdf">
+            <input type="submit" value="Upload and Process">
+        </form>
+
+        <div id="progress-container">
+            <h2 id="status-header">Processing...</h2>
+            <progress id="progress-bar" value="0" max="100"></progress>
+            <p id="status-text">Starting up...</p>
+            <button id="download-csv-btn" style="display: none;">Download Data as CSV</button>
+        </div>
+    </div>
+
+    <script>
+        const form = document.getElementById('upload-form');
+        const fileInput = document.getElementById('file-input');
+        const fileNameDisplay = document.getElementById('file-name');
+        const progressContainer = document.getElementById('progress-container');
+        const progressBar = document.getElementById('progress-bar');
+        const statusText = document.getElementById('status-text');
+        const statusHeader = document.getElementById('status-header');
+        const submitButton = form.querySelector('input[type="submit"]');
+        const downloadBtn = document.getElementById('download-csv-btn');
+
+        let pollingInterval = null;
+        let animationInterval = null;
+
+        fileInput.addEventListener('change', () => {
+            if (fileInput.files.length > 0) {
+                fileNameDisplay.textContent = fileInput.files.length === 1 
+                    ? fileInput.files[0].name 
+                    : `${fileInput.files.length} files selected`;
+            } else {
+                fileNameDisplay.textContent = 'No files selected';
+            }
+        });
+
+        form.addEventListener('submit', function(event) {
+            event.preventDefault();
+            if (pollingInterval) clearInterval(pollingInterval);
+            if (animationInterval) clearInterval(animationInterval);
+
+            progressContainer.style.display = 'block';
+            downloadBtn.style.display = 'none'; // Hide download button on new submission
+            statusHeader.textContent = 'Processing...';
+            statusHeader.className = '';
+            progressBar.value = 0;
+            submitButton.disabled = true;
+            submitButton.value = 'Processing...';
+            statusText.textContent = 'Uploading file(s)...';
+            
+            const formData = new FormData(form);
+
+            fetch('/upload', {
+                method: 'POST',
+                body: formData
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.error) { throw new Error(data.error); }
+                startPollingForText(data.job_id);
+                startSimulatedAnimation(fileInput.files.length);
+            })
+            .catch(handleError);
+        });
+
+        // This function ANIMATES the progress bar on a fake timeline
+        function startSimulatedAnimation(fileCount) {
+            let progress = 0;
+            let stage = 'uploading';
+            const preProcessingTime = 2000;
+            const ocrTimePerFile = 80000; // Adjusted for a more realistic feel
+            const totalOcrTime = fileCount * ocrTimePerFile;
+
+            animationInterval = setInterval(() => {
+                switch (stage) {
+                    case 'uploading':
+                        const uploadIncrement = 20 / (preProcessingTime / 50);
+                        progress += uploadIncrement;
+                        if (progress >= 20) {
+                            progress = 20;
+                            stage = 'ocr';
+                        }
+                        break;
+                    case 'ocr':
+                        const ocrIncrement = 75 / (totalOcrTime / 50);
+                        progress += ocrIncrement;
+                        if (progress >= 95) {
+                            stage = 'finalizing';
+                        }
+                        break;
+                    case 'finalizing':
+                        progress = Math.min(progress, 99);
+                        break;
+                }
+                progressBar.value = Math.min(progress, 99);
+            }, 50);
+        }
+
+        // This function POLLS the backend for the REAL status text
+        function startPollingForText(jobId) {
+            pollingInterval = setInterval(() => {
+                fetch(`/status/${jobId}`)
+                .then(response => response.json())
+                .then(data => {
+                    statusText.textContent = data.message;
+
+                    if (data.status === 'complete' || data.status === 'error') {
+                        clearInterval(pollingInterval);
+                        clearInterval(animationInterval);
+                        
+                        if (data.status === 'complete') {
+                            statusHeader.textContent = 'Success!';
+                            statusHeader.className = 'success';
+                            progressBar.value = 100;
+                            submitButton.disabled = false;
+                            submitButton.value = 'Upload More Files';
+                            downloadBtn.style.display = 'inline-block'; // Show the download button
+                        } else {
+                            handleError(new Error(data.message));
+                        }
+                    }
+                })
+                .catch(error => {
+                    clearInterval(pollingInterval);
+                    clearInterval(animationInterval);
+                    handleError(error);
+                });
+            }, 2000);
+        }
+
+        function handleError(error) {
+            statusHeader.textContent = 'Error!';
+            statusHeader.className = 'error';
+            statusText.textContent = 'An error occurred: ' + error.message;
+            progressBar.value = 0;
+            submitButton.disabled = false;
+            submitButton.value = 'Try Again';
+            downloadBtn.style.display = 'none'; // Ensure button is hidden on error
+        }
+        
+        downloadBtn.addEventListener('click', () => {
+            window.location.href = '/download_csv';
+        });
+
+    </script>
+</body>
+</html>
