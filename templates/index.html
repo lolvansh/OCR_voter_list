@@ -155,7 +155,7 @@
                 <div id="file-name">No files selected</div>
             </label>
             <input type="file" name="file" id="file-input" required multiple accept=".pdf">
-            <input type="submit" value="Upload and Process">
+            <input type="submit" value="Upload and Process" disabled>
         </form>
 
         <div id="progress-container">
@@ -165,9 +165,9 @@
             <button id="download-csv-btn" style="display: none;">Download Data as CSV</button>
         </div>
         <a href="/dashboard" class="button">View Dashboard</a>
-    </div>
+        </div>
 
-    <script>
+        <script>
         const form = document.getElementById('upload-form');
         const fileInput = document.getElementById('file-input');
         const fileNameDisplay = document.getElementById('file-name');
@@ -181,13 +181,16 @@
         let pollingInterval = null;
         let animationInterval = null;
 
+        // --- MODIFICATION 1: This listener now controls enabling the button ---
         fileInput.addEventListener('change', () => {
             if (fileInput.files.length > 0) {
                 fileNameDisplay.textContent = fileInput.files.length === 1 
                     ? fileInput.files[0].name 
                     : `${fileInput.files.length} files selected`;
+                submitButton.disabled = false; // Enable button only when files are selected
             } else {
                 fileNameDisplay.textContent = 'No files selected';
+                submitButton.disabled = true; // Disable if no files are selected
             }
         });
 
@@ -197,11 +200,11 @@
             if (animationInterval) clearInterval(animationInterval);
 
             progressContainer.style.display = 'block';
-            downloadBtn.style.display = 'none'; // Hide download button on new submission
+            downloadBtn.style.display = 'none';
             statusHeader.textContent = 'Processing...';
             statusHeader.className = '';
             progressBar.value = 0;
-            submitButton.disabled = true;
+            submitButton.disabled = true; // Correctly disabled during processing
             submitButton.value = 'Processing...';
             statusText.textContent = 'Uploading file(s)...';
             
@@ -220,12 +223,11 @@
             .catch(handleError);
         });
 
-        // This function ANIMATES the progress bar on a fake timeline
         function startSimulatedAnimation(fileCount) {
             let progress = 0;
             let stage = 'uploading';
             const preProcessingTime = 2000;
-            const ocrTimePerFile = 80000; // Adjusted for a more realistic feel
+            const ocrTimePerFile = 80000;
             const totalOcrTime = fileCount * ocrTimePerFile;
 
             animationInterval = setInterval(() => {
@@ -253,7 +255,6 @@
             }, 50);
         }
 
-        // This function POLLS the backend for the REAL status text
         function startPollingForText(jobId) {
             pollingInterval = setInterval(() => {
                 fetch(`/status/${jobId}`)
@@ -269,9 +270,14 @@
                             statusHeader.textContent = 'Success!';
                             statusHeader.className = 'success';
                             progressBar.value = 100;
-                            submitButton.disabled = false;
+                            downloadBtn.style.display = 'inline-block';
+                            
+                            // --- MODIFICATION 2: Keep button disabled and reset form ---
                             submitButton.value = 'Upload More Files';
-                            downloadBtn.style.display = 'inline-block'; // Show the download button
+                            submitButton.disabled = true; // Keep disabled
+                            form.reset(); // Reset the form to clear file selection
+                            fileNameDisplay.textContent = 'No files selected';
+
                         } else {
                             handleError(new Error(data.message));
                         }
@@ -290,16 +296,17 @@
             statusHeader.className = 'error';
             statusText.textContent = 'An error occurred: ' + error.message;
             progressBar.value = 0;
-            submitButton.disabled = false;
+            downloadBtn.style.display = 'none';
+
+            // --- MODIFICATION 3: Keep button disabled and reset form on error ---
             submitButton.value = 'Try Again';
-            downloadBtn.style.display = 'none'; // Ensure button is hidden on error
+            submitButton.disabled = true; // Keep disabled
+            form.reset(); // Reset the form
+            fileNameDisplay.textContent = 'No files selected';
         }
         
         downloadBtn.addEventListener('click', () => {
             window.location.href = '/download_csv';
         });
-
-
     </script>
-</body>
 </html>
