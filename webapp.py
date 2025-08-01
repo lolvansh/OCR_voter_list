@@ -11,10 +11,17 @@ import pandas as pd
 from flask import Flask, render_template, request, jsonify, send_file
 from werkzeug.utils import secure_filename
 from waitress import serve
+import sys
 
 # Import your entire processing logic from the other file
 import pipeline_processor
 
+# --- Windows Event Loop Policy (Crucial for stability) ---
+# +++ ADD THIS BLOCK +++
+if sys.platform == "win32":
+    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+    
+    
 # --- Basic Configuration & Setup ---
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
