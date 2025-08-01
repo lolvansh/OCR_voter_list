@@ -1,3 +1,4 @@
+print("--- !!! WEBAPP.PY IS BEING LOADED BY PYTHON !!! ---")
 import os
 import uuid
 import threading
@@ -50,6 +51,7 @@ class BackgroundTaskManager:
 
     def _run_loop(self):
         """Runs the event loop in the background thread."""
+        logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
         asyncio.set_event_loop(self._loop)
         self._loop.run_forever()
 

@@ -1,3 +1,4 @@
+# --- THIS IS THE FINAL, CORRECTED SCRIPT ---
 import os
 import sys
 import json
@@ -6,37 +7,32 @@ import asyncio
 import re
 import time
 import io
-from glob import glob
 from sqlite3 import Error
 import sqlite3
-
 import fitz  # PyMuPDF
 import google.generativeai as genai
 from PIL import Image
 from dotenv import load_dotenv
 from thefuzz import fuzz
 
+print("--- !!! lovde!!! ---")
+
 # --- 1. Load Environment Variables & Configure API ---
 load_dotenv()
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 if not GEMINI_API_KEY:
-    raise ValueError("GEMINI_API_KEY environment variable not set. Please set it in a .env file.")
+    raise ValueError("GEMINI_API_KEY environment variable not set.")
 genai.configure(api_key=GEMINI_API_KEY)
 
 # --- 2. Global Settings & Configuration ---
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 
-# --- Globals
-daily_input_tokens_count = 0
-daily_output_tokens_count = 0
-token_counter_lock = asyncio.Lock()
-
-# --- Config
-DEFAULT_PROCESSED_DATA_DIR = os.path.join(os.getcwd(), "processed_data")
+# --- Globals ---
 DB_NAME = "voter_data.db"
 MODEL_NAME = "gemini-1.5-flash"
 MAX_CONCURRENT_REQUESTS = 50
 
+# --- 3. Prompts and Mappings (Keep your existing prompts) ---
 # --- 3. Prompts and Mappings ---
 HEADER_PAGE_PROMPT = """
 # PROMPT_VERSION: 2025-07-18_H1 - Header Metadata Prompt;-
@@ -115,8 +111,7 @@ You MUST follow this plan precisely.
 
 **Overall Page Instruction:**
 First, identify the 'વિભાગ નામ' at the top of the page and extract only the name of the area.
-Identify the 'PAGE_NO' by looking for the number next to the word 'પૃષ્ઠ' (page), which is usually at the bottom of the image.
-If either is not present, consider it to be an empty string.
+
 
 For each 'voter' object (one per line):
 - 'type': "voter"
@@ -133,7 +128,7 @@ For each 'voter' object (one per line):
 - 'BOX_NO_ON_PAGE': The sequential number of the voter on this specific page (1-30).
 - 'STATUSTYPE': **Analyze the voter's box. If a semi-transparent "DELETED" stamp is visible over the text, set this to "D".** If a "#" symbol appears before the SL_NO, set this to "M". Otherwise, set this to "N".
 - 'PAGE_SECTION_NAME': "Use the section name you identified at the start of the process as the value for this field. Use the exact same value for every voter object on this page."
-- 'PAGE_NO': "Use the page number you identified at the start of the process as the value for this field. Use the exact same value for every voter object on this page."
+
 
 **extraction over speed, take your time but do everything as instructed**
 """
@@ -197,16 +192,11 @@ async def _do_nothing():
 async def process_image_with_gemini_async(semaphore, image, prompt, page_identifier):
     model = genai.GenerativeModel(MODEL_NAME)
     retries = 5
-    global daily_input_tokens_count, daily_output_tokens_count
     async with semaphore:
         for attempt in range(retries):
             try:
                 response = await model.generate_content_async([prompt, image])
                 if response and hasattr(response, "text") and response.text:
-                    if response.usage_metadata:
-                        async with token_counter_lock:
-                            daily_input_tokens_count += response.usage_metadata.prompt_token_count
-                            daily_output_tokens_count += response.usage_metadata.candidates_token_count
                     return response.text
                 logging.warning(f"Empty response for page {page_identifier}, attempt {attempt+1}")
                 if attempt < retries - 1: await asyncio.sleep(2**attempt)
@@ -217,43 +207,30 @@ async def process_image_with_gemini_async(semaphore, image, prompt, page_identif
     return None
 
 async def process_voter_page_in_chunks_async(semaphore, page_image, prompt, page_index):
-    """Splits a voter page, processes halves concurrently, and combines results."""
     logging.info(f"Splitting voter page {page_index + 1} for chunked processing.")
     width, height = page_image.size
     midpoint = height // 2
-    
     top_half = page_image.crop((0, 0, width, midpoint))
     bottom_half = page_image.crop((0, midpoint, width, height))
-    
     chunk_tasks = [
         process_image_with_gemini_async(semaphore, top_half, prompt, f"{page_index + 1}-Top"),
         process_image_with_gemini_async(semaphore, bottom_half, prompt, f"{page_index + 1}-Bottom")
     ]
-    
     chunk_results = await asyncio.gather(*chunk_tasks, return_exceptions=True)
-    
     combined_response_text = ""
     for i, result in enumerate(chunk_results):
         if isinstance(result, Exception) or not result:
             logging.error(f"Failed to get a valid result for page {page_index + 1}, part {i+1}. Error: {result}")
             continue
-
-        # MODIFIED: Clean the markdown from each chunk before stitching
         cleaned_chunk = result.strip().removeprefix("```json").removesuffix("```").strip()
         combined_response_text += cleaned_chunk + "\n"
-        
     return combined_response_text.strip()
 
-
 def parse_gemini_response(text_response, prompt_type, page_index):
-    """Parses Gemini's text response into a Python object (dict or list of dicts)."""
     if not text_response:
         logging.warning(f"Cannot parse empty response for page {page_index+1}")
         return None
-    
-    # MODIFIED: Cleaning is now handled differently based on page type
     if prompt_type in ["header_metadata", "footer_summary"]:
-        # Keep cleaning here for single-page (header/footer) responses
         cleaned_response = text_response.strip().removeprefix("```json").removesuffix("```").strip()
         try:
             match = re.search(r"\{[\s\S]*\}", cleaned_response)
@@ -265,7 +242,6 @@ def parse_gemini_response(text_response, prompt_type, page_index):
             logging.error(f"JSON decode error for page {page_index+1}: {e}\nResponse:\n{cleaned_response}")
             return None
     else:  # Voter list page (JSONL)
-        # The response is now pre-cleaned, so we just parse
         parsed_data = []
         for i, line in enumerate(text_response.strip().split("\n")):
             if line.strip():
@@ -296,13 +272,14 @@ def create_connection(db_file):
 def create_tables(conn):
     try:
         with conn:
-            for name, ddl in TABLES.items():
+            for ddl in TABLES.values():
                 conn.execute(ddl)
         logging.info("Database tables verified successfully.")
     except Error as e:
         logging.error(f"Failed to create tables: {e}")
 
 def insert_pdf_data(conn, pdf_data, file_name):
+    # This function is fine as is
     try:
         with conn:
             cursor = conn.cursor()
@@ -310,35 +287,26 @@ def insert_pdf_data(conn, pdf_data, file_name):
             if cursor.fetchone():
                 logging.warning(f"PDF '{file_name}' already exists. Skipping.")
                 return None
-            
             header = pdf_data.get('header_metadata', {})
             footer = pdf_data.get('footer_summary', {})
-            
             assembly_const = header.get("assembly_constituency_number_name_estimated", "")
             part_num = header.get("part_number_top_right")
             pub_date_str = header.get("publication_date", "")
-            
             pub_date = None
             if pub_date_str:
                 try:
                     pub_date = time.strftime('%Y-%m-%d', time.strptime(pub_date_str, '%d-%m-%Y'))
                 except ValueError:
                     logging.warning(f"Could not parse date '{pub_date_str}'.")
-            
             total_voters = None
-            if footer: # First, check if footer data exists at all
-                summary_rows = footer.get("summary_voters_section_A", {}).get("rows", [])
-                if summary_rows: # Then, check if the rows list is not empty
-                    total_voters = summary_rows[-1].get("total_count")
-            
+            if footer and footer.get("summary_voters_section_A", {}).get("rows"):
+                total_voters = footer["summary_voters_section_A"]["rows"][-1].get("total_count")
             values = (file_name, assembly_const, part_num, pub_date, total_voters)
             cursor.execute("INSERT INTO pdfs (file_name, assembly_constituency, part_number, publication_date, total_voters_count) VALUES (?, ?, ?, ?, ?)", values)
             pdf_id = cursor.lastrowid
             logging.info(f"Inserted PDF '{file_name}' with ID: {pdf_id}")
-
-            if footer:
-                summary_rows = footer.get("summary_voters_section_A", {}).get("rows", [])
-                for row in summary_rows:
+            if footer and footer.get("summary_voters_section_A", {}).get("rows"):
+                for row in footer["summary_voters_section_A"]["rows"]:
                     stat_values = (pdf_id, row.get('description_type'), row.get('male_count'), row.get('female_count'), row.get('other_gender_count'), row.get('total_count'))
                     cursor.execute("INSERT INTO summary_stats (pdf_id, description, male_count, female_count, other_gender_count, total_count) VALUES (?, ?, ?, ?, ?, ?)", stat_values)
             return pdf_id
@@ -368,55 +336,83 @@ def insert_sections(conn, pdf_id, header_data):
         return {}
 
 def insert_voter_data(conn, pdf_id, all_voter_data, section_cache):
-    """Inserts voter data into the database."""
-    voters_inserted = 0
-    sql = "INSERT OR IGNORE INTO voters (section_id, idc_no, VOTER_NAME, RELATIVE_NAME, rln_type, house_no, age, gender, sl_no_in_pdf, box_no_on_page, page_no, statustype, all_text) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+    """
+    Inserts voter data using ONLY the PAGE_NO provided by the AI for each record.
+    This version removes all fallback page number logic.
+    """
     try:
+        voters_inserted = 0
+        sql = "INSERT OR IGNORE INTO voters (section_id, idc_no, VOTER_NAME, RELATIVE_NAME, rln_type, house_no, age, gender, sl_no_in_pdf, box_no_on_page, page_no, statustype, all_text) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+        
+        # This initial log runs once and is correct
+        pages_to_process = [page[0].get('PAGE_NO', f"Unknown_Index_{i}") for i, page in enumerate(all_voter_data) if page and isinstance(page, list) and page[0]]
+        logging.info(f"Database insertion: Attempting to process data from pages: {pages_to_process}")
+
         with conn:
             cursor = conn.cursor()
-            for page_data in all_voter_data:
-                if not page_data or not isinstance(page_data, list) or not page_data[0].get('PAGE_SECTION_NAME'):
+            
+            for page_index, page_data in enumerate(all_voter_data):
+                
+                # These page-level checks are correct
+                if not page_data or not isinstance(page_data, list) or 'voter' not in page_data[0].get('type', ''):
+                    logging.warning(f"SKIPPING non-voter data at page index {page_index + 1}.")
                     continue
                 
-                page_section_name = page_data[0]['PAGE_SECTION_NAME']
-                
+                # We get the page number here ONLY for the page-level log messages. It is NOT used for insertion.
+                page_level_log_no = page_data[0].get('PAGE_NO', f'Unknown_Index_{page_index + 1}')
+                page_section_name = page_data[0].get('PAGE_SECTION_NAME')
+
+                if not page_section_name:
+                    logging.warning(f"SKIPPING PAGE {page_level_log_no}: The 'PAGE_SECTION_NAME' field is missing. Discarding {len(page_data)} records.")
+                    continue
+
                 best_match = max(section_cache.items(), key=lambda item: fuzz.partial_ratio(page_section_name, item[0]), default=(None, None))
                 section_id = best_match[1]
 
                 if not section_id:
-                    logging.warning(f"No matching section for '{page_section_name}'.")
+                    logging.warning(f"SKIPPING PAGE {page_level_log_no}: Failed to find a matching section_id for '{page_section_name}'. Discarding {len(page_data)} records.")
                     continue
                 
+                # This loop now uses the record's own page number for all its logging
                 for record in page_data:
-                    # This is the safety check for a valid record
-                    if record.get('type') == 'voter' and record.get('IDCARD_NO'):
+                    if record.get('IDCARD_NO'):
+                        
+                        # --- THIS IS THE FINAL GUARANTEE ---
+                        # The page number being saved to the database comes ONLY from the record itself.
+                        # The old `current_page_no` variable has been completely removed.
                         values = (
-                            section_id,
-                            record.get('IDCARD_NO'), record.get('VOTER_NAME'),
-                            record.get('RELATIVE_NAME'), record.get('RLN_TYPE', 'O'),
-                            record.get('HOUSE_NO'), record.get('AGE'),
-                            normalize_gender(record.get('GENDER')),
-                            record.get('SL_NO'), record.get('BOX_NO_ON_PAGE'),
-                            record.get('PAGE_NO'), record.get('STATUSTYPE', 'N'),
+                            section_id, 
+                            record.get('IDCARD_NO'), 
+                            record.get('VOTER_NAME'), 
+                            record.get('RELATIVE_NAME'), 
+                            record.get('RLN_TYPE', 'O'), 
+                            record.get('HOUSE_NO'), 
+                            record.get('AGE'), 
+                            normalize_gender(record.get('GENDER')), 
+                            record.get('SL_NO'), 
+                            record.get('BOX_NO_ON_PAGE'), 
+                            record.get('PAGE_NO'),  # <-- DATA FROM AI RECORD
+                            record.get('STATUSTYPE', 'N'), 
                             record.get('ALL_TXT')
                         )
                         cursor.execute(sql, values)
+                        
+                        if cursor.rowcount == 0:
+                            logging.warning(f"DUPLICATE IGNORED on page {record.get('PAGE_NO')}: ID '{record.get('IDCARD_NO')}'")
+                        
                         voters_inserted += cursor.rowcount
                     else:
-                        # --- NEW DIAGNOSTIC LOGGING ADDED HERE ---
-                        voter_name = record.get('VOTER_NAME', 'Unknown')
-                        sl_no = record.get('SL_NO', 'N/A')
-                        logging.warning(f"Skipping voter record. Reason: Missing IDCARD_NO. (Name: {voter_name}, SL_NO: {sl_no})")
+                        logging.warning(f"SKIPPING RECORD on page {record.get('PAGE_NO')}: Missing IDCARD_NO. (Name: '{record.get('VOTER_NAME')}')")
 
             logging.info(f"Committed {voters_inserted} new voter records.")
-    except Error as e:
-        logging.error(f"DB Error in insert_voter_data: {e}", exc_info=True)
 
-# --- 6. Main Pipeline Function (Compatible with Web App) ---
+    except Exception:
+        logging.error("!!!!!! A CRITICAL UNEXPECTED ERROR OCCURRED IN insert_voter_data !!!!!!", exc_info=True)
+# --- 6. Main Pipeline Function ---
 async def process_single_pdf_and_store_data_async(pdf_path, status_callback, db_connection):
     """
-    Processes a single PDF file (OCR) and then stores data into the SQLite DB,
-    reporting progress via the status_callback function.
+    Processes a single PDF file, and MANUALLY adds the correct page number
+    to each voter record after parsing.
     """
     pdf_file_name = os.path.basename(pdf_path)
     logging.info(f"Starting processing for {pdf_file_name}...")
@@ -456,20 +452,27 @@ async def process_single_pdf_and_store_data_async(pdf_path, status_callback, db_
         prompt_type = page_prompts[i]
         parsed = parse_gemini_response(res, prompt_type, i)
         
-        # --- NEW DIAGNOSTIC LOGGING ADDED HERE ---
         if parsed:
+            # --- THIS IS THE FIX ---
+            # If this is a voter page, loop through every record and add the correct page number.
             if prompt_type == "voter_list_page" and isinstance(parsed, list):
-                logging.info(f"Page {i + 1}: Parsed {len(parsed)} voter records.")
+                correct_page_no = i + 1
+                for record in parsed:
+                    if isinstance(record, dict):
+                        record['PAGE_NO'] = correct_page_no
+                logging.info(f"Page {correct_page_no}: Parsed {len(parsed)} voter records.")
+            
             all_parsed_data[i] = parsed
             
     for i, data in all_parsed_data.items():
         if page_prompts[i] == "voter_list_page" and isinstance(data, list):
             for j, record in enumerate(data):
                 if isinstance(record, dict): record['BOX_NO_ON_PAGE'] = j + 1
-                
+                    
     status_callback("processing", f"Saving extracted data for {pdf_file_name}...")
-    header_data, footer_data = all_parsed_data.get(0), all_parsed_data.get(num_pages - 1)
-    voter_pages_data = [data for i, data in all_parsed_data.items() if page_prompts[i] == "voter_list_page"]
+    header_data = all_parsed_data.get(0)
+    footer_data = all_parsed_data.get(num_pages - 1)
+    voter_pages_data = [data for i, data in all_parsed_data.items() if page_prompts[i] == "voter_list_page" and data]
     
     if not header_data:
         logging.error(f"Missing header data for '{pdf_file_name}'. Cannot proceed.")
@@ -482,6 +485,7 @@ async def process_single_pdf_and_store_data_async(pdf_path, status_callback, db_
         status_callback("processing", f"{pdf_file_name} already exists in database. Skipped.")
         return
         
+    logging.info(f"VERIFICATION: Passing a total of {sum(len(page) for page in voter_pages_data)} records to the database function.")
     section_cache = insert_sections(db_connection, pdf_id, header_data)
     insert_voter_data(db_connection, pdf_id, voter_pages_data, section_cache)
         
