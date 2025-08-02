@@ -15,7 +15,7 @@ from PIL import Image
 from dotenv import load_dotenv
 from thefuzz import fuzz
 
-print("--- !!! lovde!!! ---")
+
 
 # --- 1. Load Environment Variables & Configure API ---
 load_dotenv()

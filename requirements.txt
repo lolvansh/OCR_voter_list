@@ -1,0 +1,11 @@
+--- Core Processing Libraries ---
+PyMuPDF
+google-generativeai
+Pillow
+python-dotenv
+thefuzz[speedup]  # Installs thefuzz and python-Levenshtein for better performance
+
+--- Web Application Libraries (from webapp.py) ---
+Flask
+waitress
+pandas
