@@ -134,26 +134,71 @@ For each 'voter' object (one per line):
 """
 
 FOOTER_PAGE_PROMPT = """
-# PROMPT_VERSION: 2025-07-18_F1 - Footer Summary Prompt
+# PROMPT_VERSION: 2025-08-01_F2 - Detailed Footer Summary Prompt
 
-Perform OCR on this image. This is the **final summary page** of a voter list PDF.
-**STRICTLY** extract information into a JSON object.
-Your response MUST be a valid JSON object ONLY, with ABSOLUTELY no additional text, explanations, or conversational elements.
+# PROMPT: Strict JSON Extraction for Voter List Summary Page
 
-Return JSON in the following format:
+You are an expert OCR and data extraction agent. Your task is to analyze the provided image of a voter list summary page and extract the information into a single, valid JSON object, following the structure and instructions below precisely.
+
+Your response MUST be ONLY the JSON object. Do not include any introductory text, explanations, markdown formatting like ` ```json `, or any text outside of the final JSON structure.
+
+---
+**JSON STRUCTURE AND EXTRACTION INSTRUCTIONS:**
+---
+
 {
   "type": "footer_summary",
-  "json_schema_version": "2025-07-18_F1",
-  "assembly_constituency_number_name": "<Extract 'વિધાનસભા મત વિભાગનો નંબર અને નામ' like '160-સુરત ઉત્તર'>",
-  "part_number": "<Extract 'ભાગ નંબર' like '86'>",
-  "summary_voters_section_A": {
+  "json_schema_version": "2025-08-01_F2",
+  "assembly_constituency": "<Extract the value next to 'વિધાનસભા મત વિભાગનો નંબર અને નામ'>",
+  "part_number": "<Extract the number next to 'ભાગ નંબર' as an integer>",
+  "voter_summary": {
+    "title": "<Extract the main title, e.g., 'મતદારનું સંક્ષિપ્ત વિવરણ'>",
+    "subtitle": "<Extract the subtitle, e.g., 'A) મતદારોની સંખ્યા'>",
     "rows": [
       {
-        "description_type": "મૂળ મતદાર યાદી - નવા સીમાંકન પ્રમાણેના મત",
-        "male_count": "<Extract number>",
-        "female_count": "<Extract number>",
-        "other_gender_count": "<Extract number>",
-        "total_count": "<Extract number>"
+        "description": "મૂળ મતદાર યાદી",
+        "male_count": "<Extract 'પુરુષ' count for the 'મૂળ મતદાર યાદી' row as an integer>",
+        "female_count": "<Extract 'સ્ત્રી' count for this row as an integer>",
+        "other_gender_count": "<Extract 'ત્રીજી જાતિ' count for this row as an integer>",
+        "total_count": "<Extract 'કુલ' count for this row as an integer>"
+      },
+      {
+        "description": "વધારા યાદી - પુરવણી 1",
+        "male_count": "<Extract 'પુરુષ' count for this row as an integer>",
+        "female_count": "<Extract 'સ્ત્રી' count for this row as an integer>",
+        "other_gender_count": "<Extract 'ત્રીજી જાતિ' count for this row as an integer>",
+        "total_count": "<Extract 'કુલ' count for this row as an integer>"
+      },
+      {
+        "description": "કમી યાદી - પુરવણી 1",
+        "male_count": "<Extract 'પુરુષ' count for this row as an integer>",
+        "female_count": "<Extract 'સ્ત્રી' count for this row as an integer>",
+        "other_gender_count": "<Extract 'ત્રીજી જાતિ' count for this row as an integer>",
+        "total_count": "<Extract 'કુલ' count for this row as an integer>"
+      },
+      // ... Instruct the model to extract all other rows in the 'મતદારોની સંખ્યા' table in this format ...
+      {
+        "description": "આ સુધારણા પછી મતદાર યાદીમાં કુલ મતદારો",
+        "male_count": "<Extract 'પુરુષ' count for the final total row as an integer>",
+        "female_count": "<Extract 'સ્ત્રી' count for this row as an integer>",
+        "other_gender_count": "<Extract 'ત્રીજી જાતિ' count for this row as an integer>",
+        "total_count": "<Extract 'કુલ' count for this row as an integer>"
+      }
+    ]
+  },
+  "revision_summary": {
+    "subtitle": "<Extract the subtitle, e.g., 'B) સુધારાઓની સંખ્યા'>",
+    "rows": [
+      {
+        "type": "પુરવણી 1",
+        "identity": "ખાસ સંક્ષિપ્ત સુધારણા 2025",
+        "count": "<Extract 'સુધારાઓની સંખ્યા' for 'પુરવણી 1' as an integer>"
+      },
+      // ... Extract other revision rows ...
+      {
+        "type": "કુલ",
+        "identity": null,
+        "count": "<Extract 'સુધારાઓની સંખ્યા' for the total row as an integer>"
       }
     ]
   }
@@ -277,42 +322,105 @@ def create_tables(conn):
         logging.info("Database tables verified successfully.")
     except Error as e:
         logging.error(f"Failed to create tables: {e}")
-
 def insert_pdf_data(conn, pdf_data, file_name):
-    # This function is fine as is
+    """
+    Inserts PDF metadata and detailed summary statistics into the database.
+    This version is heavily instrumented with print statements for debugging.
+    """
+    print(f"\n--- [START] Processing insert_pdf_data for: {file_name} ---")
     try:
+        print("[INFO] Attempting to connect to the database and start a transaction.")
         with conn:
             cursor = conn.cursor()
+            
+            print(f"[DB] Checking if PDF '{file_name}' already exists in the 'pdfs' table.")
             cursor.execute("SELECT id FROM pdfs WHERE file_name = ?", (file_name,))
-            if cursor.fetchone():
+            existing_pdf = cursor.fetchone()
+
+            if existing_pdf:
+                print(f"[WARN] PDF '{file_name}' already exists with ID: {existing_pdf[0]}. Skipping insertion.")
                 logging.warning(f"PDF '{file_name}' already exists. Skipping.")
                 return None
+            
+            print("[INFO] PDF does not exist in DB. Proceeding with data extraction.")
+            
             header = pdf_data.get('header_metadata', {})
             footer = pdf_data.get('footer_summary', {})
+
+            print("\n[DATA] Header data received:")
+            print(json.dumps(header, indent=2, ensure_ascii=False))
+            print("\n[DATA] Footer data received:")
+            print(json.dumps(footer, indent=2, ensure_ascii=False))
+            print("-" * 20)
+
             assembly_const = header.get("assembly_constituency_number_name_estimated", "")
             part_num = header.get("part_number_top_right")
             pub_date_str = header.get("publication_date", "")
+            print(f"[EXTRACT] Assembly: '{assembly_const}', Part: '{part_num}', Pub Date String: '{pub_date_str}'")
+
             pub_date = None
             if pub_date_str:
                 try:
                     pub_date = time.strftime('%Y-%m-%d', time.strptime(pub_date_str, '%d-%m-%Y'))
+                    print(f"[INFO] Successfully parsed publication date to: {pub_date}")
                 except ValueError:
+                    print(f"[WARN] Could not parse date '{pub_date_str}'.")
                     logging.warning(f"Could not parse date '{pub_date_str}'.")
+
             total_voters = None
-            if footer and footer.get("summary_voters_section_A", {}).get("rows"):
-                total_voters = footer["summary_voters_section_A"]["rows"][-1].get("total_count")
+            print("[INFO] Attempting to extract total voter count from footer.")
+            if footer and footer.get("voter_summary", {}).get("rows"):
+                print("[INFO] Found 'voter_summary' with 'rows' in footer data.")
+                final_row = footer["voter_summary"]["rows"][-1]
+                print(f"[DATA] Final row for total count check: {final_row}")
+
+                if "આ સુધારણા પછી" in final_row.get("description", ""):
+                    total_voters = final_row.get("total_count")
+                    print(f"[EXTRACT] Successfully extracted total_voters: {total_voters}")
+                else:
+                    print("[WARN] Final total description 'આ સુધારણા પછી' not found in the last row.")
+            else:
+                print("[WARN] 'voter_summary' or 'rows' key not found in footer data.")
+
             values = (file_name, assembly_const, part_num, pub_date, total_voters)
+            print(f"\n[DB] Preparing to INSERT into 'pdfs' table with values: {values}")
             cursor.execute("INSERT INTO pdfs (file_name, assembly_constituency, part_number, publication_date, total_voters_count) VALUES (?, ?, ?, ?, ?)", values)
+            
             pdf_id = cursor.lastrowid
+            print(f"[DB] Successfully INSERTED record into 'pdfs' table. New pdf_id is: {pdf_id}")
             logging.info(f"Inserted PDF '{file_name}' with ID: {pdf_id}")
-            if footer and footer.get("summary_voters_section_A", {}).get("rows"):
-                for row in footer["summary_voters_section_A"]["rows"]:
-                    stat_values = (pdf_id, row.get('description_type'), row.get('male_count'), row.get('female_count'), row.get('other_gender_count'), row.get('total_count'))
+
+            print("\n[INFO] Attempting to insert detailed statistics into 'summary_stats' table.")
+            if footer and footer.get("voter_summary", {}).get("rows"):
+                rows_to_process = footer["voter_summary"]["rows"]
+                print(f"[INFO] Found {len(rows_to_process)} rows to insert into 'summary_stats'.")
+                
+                for i, row in enumerate(rows_to_process):
+                    print(f"\n  [LOOP {i+1}] Processing row: {row}")
+                    stat_values = (
+                        pdf_id,
+                        row.get('description'),
+                        row.get('male_count'),
+                        row.get('female_count'),
+                        row.get('other_gender_count'),
+                        row.get('total_count')
+                    )
+                    print(f"  [LOOP {i+1}] Preparing to INSERT into 'summary_stats' with values: {stat_values}")
                     cursor.execute("INSERT INTO summary_stats (pdf_id, description, male_count, female_count, other_gender_count, total_count) VALUES (?, ?, ?, ?, ?, ?)", stat_values)
+                    print(f"  [LOOP {i+1}] Successfully INSERTED row for '{row.get('description')}'.")
+            else:
+                print("[WARN] No rows found to insert into 'summary_stats'.")
+
+            print(f"\n[SUCCESS] All database operations for pdf_id {pdf_id} are complete. Returning pdf_id.")
             return pdf_id
+
     except Error as e:
+        print(f"\n[CRITICAL_ERROR] A database error occurred in insert_pdf_data: {e}")
         logging.error(f"DB Error in insert_pdf_data: {e}", exc_info=True)
         return None
+    finally:
+        # This will run whether there was an error or not.
+        print(f"--- [END] Finished processing insert_pdf_data for: {file_name} ---")
 
 def insert_sections(conn, pdf_id, header_data):
     if not header_data: return {}
